@@ -1,0 +1,157 @@
+/* Import house data */
+%web_drop_table(MYSAS.house);
+FILENAME REFFILE '/home/u59680846/my_courses/MM711_course/Data/housing_charact.csv';
+PROC IMPORT DATAFILE=REFFILE
+	DBMS=CSV
+	OUT=MYSAS.house;
+	GETNAMES=YES;
+RUN;
+PROC CONTENTS DATA=MYSAS.house; RUN;
+%web_open_table(MYSAS.house);
+
+
+
+/*Import sales price data*/
+%web_drop_table(MYSAS.sales);
+FILENAME REFFILE '/home/u59680846/my_courses/MM711_course/Data/sales_price.csv';
+PROC IMPORT DATAFILE=REFFILE
+	DBMS=CSV
+	OUT=MYSAS.sales;
+	GETNAMES=YES;
+RUN;
+PROC CONTENTS DATA=MYSAS.sales; RUN;
+%web_open_table(MYSAS.sales);
+
+
+/*Combine data*/
+PROC SQL; 
+CREATE TABLE MYSAS.join_house_sales 
+AS 
+SELECT HOUSE.ID, HOUSE.Living_Area, HOUSE.Garage_Area, HOUSE.Garage_Type, HOUSE.Nr_Bedroom, HOUSE.Nr_Bathroom, HOUSE.Air_Cond, HOUSE.Fireplaces, SALES.Year_Built, SALES.Yr_Sold, SALES.Price_of_Sale, SALES.Overall_Qual 
+FROM MYSAS.HOUSE HOUSE 
+INNER JOIN MYSAS.SALES SALES 
+ON 
+   ( HOUSE.ID = SALES.ID ) ; 
+PROC CONTENTS DATA=MYSAS.join_house_sales; RUN;
+QUIT;
+
+
+/*Identify Missing and invalid data*/
+title "Frequency Counts";
+proc freq data=mysas.join_house_sales;
+	tables Air_Cond Fireplaces Garage_Area Garage_Type ID Living_Area Nr_Bathroom Nr_Bedroom Overall_Qual Price_of_sale Year_Built Yr_Sold  / nocum nopercent;
+run;
+
+
+/*Recoding Air_Cond*/
+data Recode;
+set mysas.join_house_sales;
+/* use IF-THEN logic to recode air_cond */
+if      Air_Cond="n" then Air_Cond = "N";
+else if Air_Cond="y" then Air_Cond = "Y";
+else if Air_Cond="Y" then Air_Cond = "Y";
+else if Air_Cond="N" then Air_Cond = "N";
+else Air_Cond = " ";
+run;
+proc freq data=Recode;
+   tables Air_Cond;
+run;
+
+
+/*Recoding garage_type*/
+data Recode2;
+set mysas.recode;
+/* use IF-THEN logic to recode garage_type */
+if      Garage_Type="Attached" then Garage_Type = "Attached";
+else if Garage_Type="Detached" then Garage_Type = "Detached";
+else Garage_Type = "NA"; 
+run;
+proc freq data=Recode2;
+   tables Garage_Type;
+run;
+
+
+/*Identify and remove duplicate data*/
+proc sort data=recode2 out=no_duplicates 
+   noduprecs;
+   by ID;
+run;
+title "Cleaned House Data";
+proc print data=no_duplicates;
+   id ID;
+run;
+
+
+/*Transform variables*/
+data work.transform;
+	set mysas.no_duplicates;
+	Years_Before_Sale = Yr_Sold - Year_Built;
+run;
+
+
+/*Descriptive Statistics for Numerical Variables*/
+proc means data=mysas.transform
+	 n nmiss min max mean median stddev maxdec=2;
+run;
+
+
+/*Visualization of Data*/
+
+proc sgplot data=MYSAS.TRANSFORM;
+	title height=14pt "Distribution of House Prices";
+	histogram Price_of_Sale / scale=count showbins;
+	density Price_of_Sale;
+	density Price_of_Sale / type=Kernel;
+	xaxis grid label="Price of Sale";
+	yaxis grid;
+run;
+proc sgplot data=MYSAS.TRANSFORM;
+	title height=14pt "Distribution of Year Built";
+	histogram Year_Built / showbins nbins=9 fillattrs=(color=CX2f5ea5);
+	density Year_Built;
+	xaxis label="Year Built";
+	yaxis grid;
+run;
+
+proc sgplot data=MYSAS.TRANSFORM;
+	title height=14pt "Bar Chart of Year Sold";
+	vbar Yr_Sold / fillattrs=(color=CX43435c);
+	xaxis label="Year Sold";
+	yaxis grid;
+run;
+
+proc sgplot data=MYSAS.TRANSFORM;
+	title height=14pt "Scatter Plot - Year Built / Years Before Sale";
+	reg x=Year_Built y=Years_Before_Sale / nomarkers;
+	scatter x=Year_Built y=Years_Before_Sale /;
+	xaxis grid label="Year Built";
+	yaxis grid label="Years Before Sale";
+run;
+
+proc template;
+	define statgraph SASStudio.Pie;
+		begingraph;
+		entrytitle "Garage Type" / textattrs=(size=14);
+		layout region;
+		piechart category=Garage_Type / stat=pct;
+		endlayout;
+		endgraph;
+	end;
+run;
+
+proc sgrender template=SASStudio.Pie data=MYSAS.TRANSFORM;
+run;
+
+
+/*Pearson corr*/
+proc corr data = mysas.transform;
+run;
+
+
+/* Simple Linear Regression*/
+proc reg data=MYSAS.TRANSFORM alpha=0.05 plots(only)=(diagnostics residuals 
+		fitplot observedbypredicted);
+	model Price_of_Sale=Overall_Qual /;
+	run;
+quit;
+
